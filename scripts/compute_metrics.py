@@ -1,3 +1,17 @@
+"""
+compute_metrics.py — Performance & Risk Analytics
+Bluestock Mutual Fund Capstone | Day 4
+
+Computes daily returns, CAGR, Sharpe/Sortino ratios, alpha/beta vs.
+benchmark indices, maximum drawdown, and a composite fund scorecard.
+Also generates the benchmark comparison chart used in the final report.
+
+Usage:
+    python scripts/compute_metrics.py
+"""
+
+import os
+import logging
 import pandas as pd
 import numpy as np
 from scipy import stats
@@ -9,36 +23,39 @@ import seaborn as sns
 import warnings
 warnings.filterwarnings('ignore')
 
+logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(levelname)-8s  %(message)s",
+                     datefmt="%Y-%m-%d %H:%M:%S")
+logger = logging.getLogger(__name__)
+
 DATA_PATH = "../data/raw/"
 OUTPUT_PATH = "../data/processed/"
 CHARTS_PATH = "../notebooks/15_charts/"
 RF = 0.065  # Risk-free rate 6.5%
 TRADING_DAYS = 252
 
-import os
 os.makedirs(OUTPUT_PATH, exist_ok=True)
 os.makedirs(CHARTS_PATH, exist_ok=True)
 
 # ── Load data ────────────────────────────────────────────────────────────────
-print("Loading data...")
+logger.info("Loading data...")
 fund_master = pd.read_csv(DATA_PATH + "01_fund_master.csv", parse_dates=["launch_date"])
 nav_history  = pd.read_csv(DATA_PATH + "02_nav_history.csv", parse_dates=["date"])
 benchmark    = pd.read_csv(DATA_PATH + "10_benchmark_indices.csv", parse_dates=["date"])
 
 nav_history.sort_values(["amfi_code","date"], inplace=True)
-print(f"NAV rows: {len(nav_history):,}  |  Funds: {nav_history['amfi_code'].nunique()}")
+logger.info(f"NAV rows: {len(nav_history):,}  |  Funds: {nav_history['amfi_code'].nunique()}")
 
 # ── STEP 1: Daily returns ─────────────────────────────────────────────────────
 nav_history["daily_return"] = nav_history.groupby("amfi_code")["nav"].pct_change()
 nav_history.dropna(subset=["daily_return"], inplace=True)
 
-print("\n── Daily Return Distribution (sample) ──")
+logger.info("\n── Daily Return Distribution (sample) ──")
 ret_desc = nav_history.groupby("amfi_code")["daily_return"].describe().round(6)
 print(ret_desc.head(5).to_string())
-print(f"\nMean of all daily returns : {nav_history['daily_return'].mean():.5f}")
-print(f"Std  of all daily returns : {nav_history['daily_return'].std():.5f}")
-print(f"Min  daily return         : {nav_history['daily_return'].min():.5f}")
-print(f"Max  daily return         : {nav_history['daily_return'].max():.5f}")
+logger.info(f"\nMean of all daily returns : {nav_history['daily_return'].mean():.5f}")
+logger.info(f"Std  of all daily returns : {nav_history['daily_return'].std():.5f}")
+logger.info(f"Min  daily return         : {nav_history['daily_return'].min():.5f}")
+logger.info(f"Max  daily return         : {nav_history['daily_return'].max():.5f}")
 
 # ── STEP 2: CAGR helper ───────────────────────────────────────────────────────
 def cagr(nav_series, years):
@@ -54,7 +71,7 @@ def cagr(nav_series, years):
         return np.nan
     return (nav_end / nav_start) ** (1 / actual_years) - 1
 
-print("\n── Computing CAGR for all funds ──")
+logger.info("\n── Computing CAGR for all funds ──")
 cagr_records = []
 for code, grp in nav_history.groupby("amfi_code"):
     nav_ts = grp.set_index("date")["nav"]
@@ -69,7 +86,7 @@ cagr_df = pd.DataFrame(cagr_records).merge(
     fund_master[["amfi_code","scheme_name","fund_house","category","expense_ratio_pct"]], on="amfi_code")
 
 # ── STEP 3: Sharpe Ratio ──────────────────────────────────────────────────────
-print("── Computing Sharpe & Sortino ──")
+logger.info("── Computing Sharpe & Sortino ──")
 risk_records = []
 for code, grp in nav_history.groupby("amfi_code"):
     r = grp["daily_return"].dropna()
@@ -86,7 +103,7 @@ for code, grp in nav_history.groupby("amfi_code"):
 risk_df = pd.DataFrame(risk_records)
 
 # ── STEP 4: Alpha & Beta (OLS vs NIFTY 100) ──────────────────────────────────
-print("── Computing Alpha & Beta ──")
+logger.info("── Computing Alpha & Beta ──")
 nifty100 = benchmark[benchmark["index_name"]=="NIFTY100"].set_index("date")["close_value"].sort_index()
 nifty100_ret = nifty100.pct_change().dropna()
 
@@ -109,11 +126,11 @@ for code, grp in nav_history.groupby("amfi_code"):
 ab_df = pd.DataFrame(ab_records)
 ab_df = ab_df.merge(fund_master[["amfi_code","scheme_name","fund_house","category"]], on="amfi_code")
 
-print(f"Alpha-Beta computed for {len(ab_df)} funds")
+logger.info(f"Alpha-Beta computed for {len(ab_df)} funds")
 print(ab_df[["scheme_name","alpha_ann","beta","r_squared"]].to_string())
 
 # ── STEP 5: Maximum Drawdown ──────────────────────────────────────────────────
-print("\n── Computing Maximum Drawdown ──")
+logger.info("\n── Computing Maximum Drawdown ──")
 dd_records = []
 for code, grp in nav_history.groupby("amfi_code"):
     nav_ts  = grp.set_index("date")["nav"].sort_index()
@@ -137,7 +154,7 @@ dd_df = pd.DataFrame(dd_records).merge(fund_master[["amfi_code","scheme_name","f
 print(dd_df[["scheme_name","max_drawdown","peak_date","trough_date"]].to_string())
 
 # ── STEP 6: Fund Scorecard ────────────────────────────────────────────────────
-print("\n── Building Fund Scorecard ──")
+logger.info("\n── Building Fund Scorecard ──")
 # Merge all metrics
 scorecard = cagr_df[["amfi_code","scheme_name","fund_house","category","cagr_3yr","expense_ratio_pct"]].merge(
     risk_df[["amfi_code","sharpe_ratio"]], on="amfi_code").merge(
@@ -176,11 +193,11 @@ scorecard["composite_score"] = (
 scorecard.sort_values("composite_score", ascending=False, inplace=True)
 scorecard["scorecard_rank"] = range(1, len(scorecard)+1)
 
-print("\nTop 10 funds by scorecard:")
+logger.info("\nTop 10 funds by scorecard:")
 print(scorecard[["scorecard_rank","scheme_name","composite_score","cagr_3yr","sharpe_ratio","alpha_ann","max_drawdown"]].head(10).to_string())
 
 # ── STEP 7: Benchmark Comparison Chart ───────────────────────────────────────
-print("\n── Generating Benchmark Comparison Chart ──")
+logger.info("\n── Generating Benchmark Comparison Chart ──")
 
 # Get top 5 funds from scorecard (direct plans preferred)
 top5_codes = scorecard.head(5)["amfi_code"].tolist()
@@ -242,25 +259,25 @@ plt.tight_layout()
 chart_path = CHARTS_PATH + "benchmark_comparison.png"
 plt.savefig(chart_path, dpi=150, bbox_inches='tight')
 plt.close()
-print(f"Chart saved → {chart_path}")
+logger.info(f"Chart saved → {chart_path}")
 
 # ── Save CSVs ─────────────────────────────────────────────────────────────────
 cols_scorecard = ["scorecard_rank","amfi_code","scheme_name","fund_house","category",
                   "composite_score","cagr_3yr",
                   "sharpe_ratio","alpha_ann","expense_ratio_pct","max_drawdown"]
 scorecard[cols_scorecard].to_csv(OUTPUT_PATH+"fund_scorecard.csv", index=False)
-print(f"Saved fund_scorecard.csv ({len(scorecard)} rows)")
+logger.info(f"Saved fund_scorecard.csv ({len(scorecard)} rows)")
 
 ab_df.to_csv(OUTPUT_PATH+"alpha_beta.csv", index=False)
-print(f"Saved alpha_beta.csv ({len(ab_df)} rows)")
+logger.info(f"Saved alpha_beta.csv ({len(ab_df)} rows)")
 
 pd.DataFrame(te_records).to_csv(OUTPUT_PATH+"tracking_error.csv", index=False)
-print(f"Saved tracking_error.csv ({len(te_records)} rows)")
+logger.info(f"Saved tracking_error.csv ({len(te_records)} rows)")
 
 cagr_df.to_csv(OUTPUT_PATH+"cagr_comparison.csv", index=False)
-print("Saved cagr_comparison.csv")
+logger.info("Saved cagr_comparison.csv")
 
 dd_df.to_csv(OUTPUT_PATH+"max_drawdown.csv", index=False)
-print("Saved max_drawdown.csv")
+logger.info("Saved max_drawdown.csv")
 
-print("\n✅ All outputs generated successfully!")
+logger.info("\n✅ All outputs generated successfully!")
